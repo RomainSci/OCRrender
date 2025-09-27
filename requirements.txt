@@ -1,6 +1,6 @@
+easyocr
+pdf2image
+pillow
 fastapi
 uvicorn[standard]
-pdf2image
-pytesseract
 python-multipart
-pillow
