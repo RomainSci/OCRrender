@@ -7,20 +7,18 @@ from typing import Dict
 
 app = FastAPI()
 
-# Autoriser toutes les origines (config pour dev local et déploiement)
+# Configuration CORS - autorise toutes les origines
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # changer pour domaine du frontend en production
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 def parse_cotisations_table(text: str) -> Dict:
     """
-    Analyse le texte OCR pour extraire :
-    - cotisations annuelles totales par année
-    - cotisations mensualisées
-    - totaux annuels et mensuels
+    Analyse le texte OCR pour extraire les cotisations annuelles, mensualisées et les totaux.
     """
     pattern = re.compile(
         r"^\s*(\d+)\s+[\d.,\s]+€\s+[\d.,\s]+€\s+([\d.,\s]+)\s*€", 
@@ -39,20 +37,21 @@ def parse_cotisations_table(text: str) -> Dict:
         "cotisationsAnnuel": annuel,
         "cotisationsMensuel": mensuel,
         "totalAnnuel": total_annuel,
-        "totalMensuel": total_mensuel
+        "totalMensuel": total_mensuel,
     }
 
 @app.post("/ocr/extract")
 async def extract_cotisations(pdf: UploadFile = File(...)):
     # Lecture du fichier PDF envoyé
     content = await pdf.read()
-    # Conversion PDF => images
+    # Conversion PDF en images
     pages = convert_from_bytes(content)
     full_text = ''
-    # OCR sur chaque image
+    # OCR sur chaque page/image
     for page in pages:
         text = pytesseract.image_to_string(page, lang="fra")
         full_text += text + "\n"
-    # Extraction métier depuis texte OCR
+    # Extraction métier depuis le texte OCR
     result = parse_cotisations_table(full_text)
     return result
+
