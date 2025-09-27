@@ -1,38 +1,53 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pdf2image import convert_from_bytes
-import pytesseract
-import re
+import easyocr
 from typing import Dict
 
 app = FastAPI()
 
-# Configuration CORS - autorise toutes les origines
+# CORS configuration - autorise toutes origines
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # changer pour domaine du frontend en production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def parse_cotisations_table(text: str) -> Dict:
+# Initialiser le lecteur EasyOCR pour le français
+reader = easyocr.Reader(['fr'], gpu=False)  # gpu=True si GPU dispo
+
+def parse_cotisations_easyocr(text_lines) -> Dict:
     """
-    Analyse le texte OCR pour extraire les cotisations annuelles, mensualisées et les totaux.
+    Analyse la liste des lignes retournées par EasyOCR
+    pour extraire les cotisations annuelles, mensualisées et les totaux.
+    
+    text_lines = liste de string OCR page par page.
     """
-    pattern = re.compile(
-        r"^\s*(\d+)\s+[\d.,\s]+€\s+[\d.,\s]+€\s+([\d.,\s]+)\s*€", 
-        re.MULTILINE
-    )
     annuel = {}
     mensuel = {}
-    for match in pattern.finditer(text):
-        annee = int(match.group(1))
-        total_annuel = float(match.group(2).replace(' ', '').replace(',', '.'))
-        annuel[annee] = total_annuel
-        mensuel[annee] = round(total_annuel / 12, 2)
+
+    for line in text_lines:
+        # Recherche d’une ligne "année ... total €"
+        parts = line.replace(',', '.').split()
+        if len(parts) >= 2 and parts[0].isdigit():
+            try:
+                annee = int(parts[0])
+                valeur = None
+                for part in reversed(parts):
+                    if part.replace('.', '').isdigit():
+                        valeur = float(part)
+                        break
+                if valeur is not None:
+                    annuel[annee] = valeur
+                    mensuel[annee] = round(valeur / 12, 2)
+            except Exception:
+                continue
+
     total_annuel = sum(annuel.values())
     total_mensuel = sum(mensuel.values())
+
     return {
         "cotisationsAnnuel": annuel,
         "cotisationsMensuel": mensuel,
@@ -42,16 +57,13 @@ def parse_cotisations_table(text: str) -> Dict:
 
 @app.post("/ocr/extract")
 async def extract_cotisations(pdf: UploadFile = File(...)):
-    # Lecture du fichier PDF envoyé
     content = await pdf.read()
-    # Conversion PDF en images
-    pages = convert_from_bytes(content)
-    full_text = ''
-    # OCR sur chaque page/image
-    for page in pages:
-        text = pytesseract.image_to_string(page, lang="fra")
-        full_text += text + "\n"
-    # Extraction métier depuis le texte OCR
-    result = parse_cotisations_table(full_text)
-    return result
+    images = convert_from_bytes(content)
 
+    all_text_lines = []
+    for image in images:
+        ocr_result = reader.readtext(image, detail=0)
+        all_text_lines.extend(ocr_result)
+
+    parsed = parse_cotisations_easyocr(all_text_lines)
+    return parsed
